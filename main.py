@@ -1,7 +1,9 @@
 import os
 import json
-from src.image_utils import load_image, preprocess_image, prepare_3d_coordinates
+from src.image_utils import load_image, prepare_3d_coordinates
 from src.truck_bed_detection import detect_truck_bed
+from scipy.spatial import ConvexHull
+import numpy as np
 
 
 def save_text_results(output_dir, category, filename, plane_params, inlier_points):
@@ -12,10 +14,17 @@ def save_text_results(output_dir, category, filename, plane_params, inlier_point
 
     result_file_path = os.path.join(category_dir, filename.replace('.png', '.json'))
 
+    if isinstance(plane_params, tuple):
+        plane_params = [float(param.item()) if isinstance(param, np.ndarray) else float(param)
+                        for param in plane_params]
+
+    if isinstance(inlier_points, np.ndarray):
+        inlier_points = inlier_points.tolist()
+
     result_data = {
         "filename": filename,
         "plane_params": plane_params,
-        "inlier_points": inlier_points.tolist() if inlier_points is not None else None,
+        "inlier_points": inlier_points if inlier_points is not None else None,
         "category": category
     }
 
@@ -34,13 +43,29 @@ def process_directory(input_dir, output_dir):
                     image_path = os.path.join(category_path, filename)
                     image = load_image(image_path)
 
-                    image = preprocess_image(image)
+                    X, Y, Z = prepare_3d_coordinates(image)
+                    plane_params, inlier_points = detect_truck_bed(X, Y, Z)
+                    # print("I am here", image_path, image.shape, X.shape, Y.shape, Z.shape)
 
-                    plane_params, inlier_points = detect_truck_bed(*prepare_3d_coordinates(image))
+                    inlier_mask = ~np.isnan(inlier_points[:, 0])
+                    inlier_X = inlier_points[inlier_mask, 0]
+                    inlier_Y = inlier_points[inlier_mask, 1]
+                    inlier_Z = inlier_points[inlier_mask, 2]
 
-                    save_text_results(output_dir, category, filename, plane_params, inlier_points)
+                    points_2d = np.column_stack((inlier_X, inlier_Y))
 
-                    print(f"Обработано {filename}, параметры плоскости: {plane_params}")
+                    hull = ConvexHull(points_2d)
+
+                    hull_x = inlier_X[hull.vertices]
+                    hull_y = inlier_Y[hull.vertices]
+                    hull_z = inlier_Z[hull.vertices]
+
+                    final_points = np.column_stack((hull_x, hull_y, hull_z))
+
+                    save_text_results(output_dir, category, filename, plane_params, final_points)
+
+                    print(f"Обработано {filename}, параметры плоскости: {plane_params}, "
+                          f"количество точек: {len(final_points)}")
 
 
 if __name__ == "__main__":
