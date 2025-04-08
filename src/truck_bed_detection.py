@@ -1,5 +1,5 @@
 import numpy as np
-from sklearn.linear_model import RANSACRegressor
+from sklearn.linear_model import RANSACRegressor, LinearRegression
 # import matplotlib.pyplot as plt
 from scipy.spatial import cKDTree
 from sklearn.cluster import DBSCAN
@@ -49,9 +49,9 @@ def detect_truck_bed(X, Y, Z):
     D = -Z_plane.item()
 
     close_mask = np.abs(Z_valid - best_z) < 0.1
-    Z_sel = Z_valid[close_mask]
     X_sel = X_valid[close_mask]
     Y_sel = Y_valid[close_mask]
+    Z_sel = Z_valid[close_mask]
 
     all_points = np.column_stack((X_valid, Y_valid))
     tree = cKDTree(all_points)
@@ -109,4 +109,30 @@ def detect_truck_bed(X, Y, Z):
         # else:
         #     print("Нет точек, удовлетворяющих условию.")
     # print("Количество точек в итоговом кластере:", len(final_cluster))
+
+    margin = 0.5  # Расстояние от края, чтобы не учитывать точки на стенках
+    mask_valid_center = (X_valid >= center_left + margin) & (X_valid <= center_right - margin)
+    X_center = X_valid[mask_valid_center & close_mask]
+    Y_center = Y_valid[mask_valid_center & close_mask]
+    Z_center = Z_valid[mask_valid_center & close_mask]
+
+    # Если есть точки, не находящиеся на краю, используем их для аппроксимации плоскости
+    if len(X_center) > 0:
+        try:
+            model = RANSACRegressor(estimator=LinearRegression())
+            model.fit(np.column_stack((X_center, Y_center)), Z_center)
+
+            if model.estimator_ is not None:  # Проверяем наличие обученной модели
+                # Получаем коэффициенты из внутреннего estimator
+                A, B = model.estimator_.coef_
+                D = model.estimator_.intercept_
+                C = -1  # Для уравнения плоскости AX + BY + CZ + D = 0
+            else:
+                A, B, C, D = 0, 0, 1, -Z_plane.item()
+        except Exception as e:
+            print(f"RANSAC error: {str(e)}")
+            A, B, C, D = 0, 0, 1, -Z_plane.item()
+    else:
+        A, B, C, D = 0, 0, 1, -Z_plane.item()
+
     return (A, B, C, D), final_cluster
