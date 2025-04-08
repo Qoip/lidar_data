@@ -1,0 +1,5 @@
+numpy==1.24.2
+scikit-learn==1.2.2
+imageio==2.31.1
+ipywidgets==7.7.1
+plotly==5.10.0
