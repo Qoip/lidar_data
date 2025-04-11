@@ -1,13 +1,20 @@
 import numpy as np
+import matplotlib.pyplot as plt
 from sklearn.linear_model import RANSACRegressor, LinearRegression
-# import matplotlib.pyplot as plt
-from scipy.spatial import cKDTree
+from scipy.spatial import ConvexHull
 from sklearn.cluster import DBSCAN
+from scipy.spatial import cKDTree
+
+from base import PlaneDetectionResult
+from image_utils import prepare_3d_coordinates
+
+DEBUG_PLOT = False
 
 
-def detect_truck_bed(X, Y, Z):
+def detect(img) -> PlaneDetectionResult:
     """Ищет плоскость дна кузова по самому плотному слою в центре сцены."""
 
+    X, Y, Z = prepare_3d_coordinates(img)
     mask = ~np.isnan(Z)
     Z_valid = Z[mask]
     X_valid = X[mask]
@@ -97,36 +104,35 @@ def detect_truck_bed(X, Y, Z):
         else:
             final_cluster = valid_points[labels == top1_label]
 
-        # if len(final_cluster) > 0:
-        #     plt.figure(figsize=(6, 6))
-        #     plt.scatter(final_cluster[:, 0], final_cluster[:, 1], s=2, c="blue")
-        #     plt.title("Итоговый кластер (с объединением)")
-        #     plt.xlabel("X")
-        #     plt.ylabel("Y")
-        #     plt.axis("equal")
-        #     plt.grid(True)
-        #     plt.show()
-        # else:
-        #     print("Нет точек, удовлетворяющих условию.")
-    # print("Количество точек в итоговом кластере:", len(final_cluster))
+        if DEBUG_PLOT:
+            print("Количество точек в итоговом кластере:", len(final_cluster))
+            if len(final_cluster) > 0:
+                plt.figure(figsize=(6, 6))
+                plt.scatter(final_cluster[:, 0], final_cluster[:, 1], s=2, c="blue")
+                plt.title("Итоговый кластер (с объединением)")
+                plt.xlabel("X")
+                plt.ylabel("Y")
+                plt.axis("equal")
+                plt.grid(True)
+                plt.show()
+            else:
+                print("Нет точек, удовлетворяющих условию.")
 
-    margin = 0.5  # Расстояние от края, чтобы не учитывать точки на стенках
+    margin = 0.5
     mask_valid_center = (X_valid >= center_left + margin) & (X_valid <= center_right - margin)
     X_center = X_valid[mask_valid_center & close_mask]
     Y_center = Y_valid[mask_valid_center & close_mask]
     Z_center = Z_valid[mask_valid_center & close_mask]
 
-    # Если есть точки, не находящиеся на краю, используем их для аппроксимации плоскости
     if len(X_center) > 0:
         try:
             model = RANSACRegressor(estimator=LinearRegression())
             model.fit(np.column_stack((X_center, Y_center)), Z_center)
 
-            if model.estimator_ is not None:  # Проверяем наличие обученной модели
-                # Получаем коэффициенты из внутреннего estimator
+            if model.estimator_ is not None:
                 A, B = model.estimator_.coef_
                 D = model.estimator_.intercept_
-                C = -1  # Для уравнения плоскости AX + BY + CZ + D = 0
+                C = -1
             else:
                 A, B, C, D = 0, 0, 1, -Z_plane.item()
         except Exception as e:
@@ -135,4 +141,11 @@ def detect_truck_bed(X, Y, Z):
     else:
         A, B, C, D = 0, 0, 1, -Z_plane.item()
 
-    return (A, B, C, D), final_cluster
+    hull = ConvexHull(final_cluster[:, :2])
+    hull_x = final_cluster[hull.vertices, 0]
+    hull_y = final_cluster[hull.vertices, 1]
+    hull_z = final_cluster[hull.vertices, 2]
+    return PlaneDetectionResult(
+        plane_coeffs=(A, B, C, D),
+        bottom_hull=np.column_stack((hull_x, hull_y, hull_z)),
+    )
